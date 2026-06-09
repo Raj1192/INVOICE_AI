@@ -4,43 +4,48 @@ An end-to-end AI automation solution that ingests invoices (PDF, image, or text)
 extracts structured data, validates it, assesses risk with an LLM, stores results,
 and answers questions through a chat assistant.
 
-**Live demo:** `<YOUR-STREAMLIT-CLOUD-URL>` ← add after deployment
+**🔗 Live demo:** https://invoiceai-npg6kpyfgnshyt3vxws9nr.streamlit.app
+
+**💻 Source:** https://github.com/Raj1192/INVOICE_AI
 
 ---
 
 ## Architecture
 
-```
-                 ┌──────────────────────────────────────────────┐
-                 │              Streamlit UI (app.py)            │
-                 │   ① Upload  │  ② Dashboard  │  ③ AI Chat      │
-                 └──────┬───────────────▲───────────────▲────────┘
-                        │ file bytes    │ records       │ answers
-                        ▼               │               │
-┌───────────────────────────────────────┴───────────────┴────────┐
-│                  Orchestration layer (pipeline.py)               │
-│                                                                  │
-│  Upload ─▶ 1. Text extraction ─▶ 2. Field extraction ─▶          │
-│            (extractors.py)        (Gemini, JSON mode)            │
-│                                                                  │
-│        ─▶ 3. Validation ─▶ 4. Summary + Risk ─▶ 5. Store          │
-│           (validators.py,    (Gemini)            (storage.py,    │
-│            rule-based)                            SQLite +       │
-│                                                   audit log)     │
-└───────────────┬──────────────────────────┬──────────────────────┘
-                │                          │
-        ┌───────▼────────┐         ┌───────▼────────┐
-        │  Gemini API     │         │  SQLite DB      │
-        │ (gemini_client) │         │ invoices.db     │
-        │ REST + retries  │         │ + audit_log     │
-        └────────────────┘         └────────────────┘
+```mermaid
+flowchart TD
+    subgraph UI["Streamlit UI (app.py)"]
+        U1["① Upload"]
+        U2["② Dashboard"]
+        U3["③ AI Chat"]
+    end
+
+    subgraph PIPE["Orchestration layer (pipeline.py)"]
+        direction TB
+        S1["1 - Text extraction<br/>(extractors.py)"]
+        S2["2 - Field extraction<br/>(Gemini, JSON mode)"]
+        S3["3 - Validation<br/>(validators.py, rule-based)"]
+        S4["4 - Summary + Risk<br/>(Gemini)"]
+        S5["5 - Store<br/>(storage.py)"]
+        S1 --> S2 --> S3 --> S4 --> S5
+    end
+
+    GEM["Gemini API<br/>(gemini_client.py)<br/>REST + retries"]
+    DB[("SQLite DB<br/>invoices.db + audit_log")]
+
+    U1 -- "file bytes" --> S1
+    S2 -.-> GEM
+    S4 -.-> GEM
+    S5 --> DB
+    DB -- "records" --> U2
+    DB -- "answers" --> U3
 ```
 
 ## Pipeline flow
 
 ```
-Upload Document → OCR / Parsing → LLM Field Extraction → Rule-based Validation
-→ LLM Summary & Risk Detection → Store (SQLite + audit log) → Dashboard / Chat
+Upload Document -> OCR / Parsing -> LLM Field Extraction -> Rule-based Validation
+-> LLM Summary & Risk Detection -> Store (SQLite + audit log) -> Dashboard / Chat
 ```
 
 ## Output contract (per task spec)
@@ -76,25 +81,32 @@ Upload Document → OCR / Parsing → LLM Field Extraction → Rule-based Valida
 
 ## LLM used
 
-**Google Gemini (`gemini-2.0-flash`)** via the raw REST API (`requests`), chosen for:
-- generous free tier (no credit card needed for the demo)
-- native multimodal input → doubles as the OCR engine
+**Google Gemini (`gemini-2.5-flash-lite`)** via the raw REST API (`requests`),
+chosen for:
+- a free tier (no credit card needed for the demo)
+- native multimodal input → doubles as the OCR engine for image/scanned invoices
 - JSON response mode for reliable structured extraction
 
 The client (`gemini_client.py`) demonstrates full API-integration hygiene:
-**authentication** (key from env/secrets, never hard-coded), **error handling**
-(timeouts, HTTP status handling, exponential-backoff retries on 429/5xx),
-and **response processing** (safe payload navigation, safety-filter detection,
+**authentication** (key read from env/secrets, never hard-coded), **error handling**
+(timeouts, HTTP status handling, exponential-backoff retries on 429/5xx), and
+**response processing** (safe payload navigation, safety-filter detection,
 markdown-fence-tolerant JSON parsing).
+
+> **Note on model choice:** the model name is configurable via the `GEMINI_MODEL`
+> environment variable and defaults to `gemini-2.5-flash-lite`. The older
+> `gemini-2.0-flash` model was dropped from the free tier (Dec 2025), so the code
+> targets a current free-tier Flash model. The LLM call is isolated in a single
+> module, so OpenAI / OpenRouter / HuggingFace could be swapped in without
+> touching the rest of the pipeline.
 
 ## Automation approach
 
 Custom Python orchestration (`pipeline.py`) rather than n8n/Zapier: a single
 `process_document()` function chains the five stages, reports progress to the UI
 through a callback, and logs every stage to the audit trail. This keeps the whole
-flow versionable, testable, and dependency-light. The same stages could be lifted
-1:1 into n8n nodes (Webhook → Code → HTTP Request → DB) if a low-code runner is
-preferred.
+flow versionable, testable, and dependency-light. The same stages map 1:1 onto
+n8n nodes (Webhook -> Code -> HTTP Request -> DB) if a low-code runner is preferred.
 
 ## Future improvements
 
@@ -111,13 +123,22 @@ preferred.
 ## Run locally
 
 ```bash
-git clone <this-repo>
-cd invoice-ai
+git clone https://github.com/Raj1192/INVOICE_AI.git
+cd INVOICE_AI
+python -m venv venv
+venv\Scripts\activate            # Windows (Mac/Linux: source venv/bin/activate)
 pip install -r requirements.txt
+```
 
-# Get a free key at https://aistudio.google.com/apikey
-export GEMINI_API_KEY="your-key"      # Windows: set GEMINI_API_KEY=your-key
+Add your key — create a file `.streamlit/secrets.toml` containing:
 
+```toml
+GEMINI_API_KEY = "your-key"      # free key from https://aistudio.google.com/apikey
+```
+
+Then run:
+
+```bash
 streamlit run app.py
 ```
 
@@ -126,9 +147,9 @@ A `sample_invoice.pdf` is included for testing.
 ## Deploy to Streamlit Cloud (public URL)
 
 1. Push this repo to GitHub (public repo).
-2. Go to https://share.streamlit.io → **New app** → select the repo, branch `main`,
-   main file `app.py`.
-3. In **Advanced settings → Secrets**, paste:
+2. Go to https://share.streamlit.io -> **Create app** -> select the repo, branch
+   `main`, main file `app.py`.
+3. In **Advanced settings -> Secrets**, paste:
    ```toml
    GEMINI_API_KEY = "your-key"
    ```
@@ -150,7 +171,7 @@ docker run -p 8501:8501 -e GEMINI_API_KEY="your-key" invoice-ai
 ```
 app.py             Streamlit UI (upload / dashboard / chat)
 pipeline.py        Orchestration of the 5-stage automation flow
-extractors.py      PDF / image / text → raw text (Gemini Vision as OCR)
+extractors.py      PDF / image / text -> raw text (Gemini Vision as OCR)
 gemini_client.py   REST client: auth, retries, error handling, JSON parsing
 validators.py      Deterministic rule-based field validation
 storage.py         SQLite persistence + audit logging
